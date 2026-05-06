@@ -16,6 +16,7 @@ on:
     tags:
       - "v*.*.*"
       - "APOLLO-*"
+      - "STARKWARE-PIN-*"
 
 permissions:
   contents: read

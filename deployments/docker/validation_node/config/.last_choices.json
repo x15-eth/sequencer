@@ -1,0 +1,8 @@
+{
+  "environment": "integration",
+  "validator_id": "0x65865875fda",
+  "ordered_l1_endpoint_urls": "hello.world good.bye",
+  "url_header_list": "https://some_place/doesnt_matter,blah^blue",
+  "consensus_advertised_multiaddr": "/ip4/42.42.42.42/tcp:999,/dns/hostmost/tcp/4242",
+  "consensus_p2p_port": "53080"
+}
