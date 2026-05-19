@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use blake2::{Blake2s256, Digest};
 use blockifier::execution::casm_hash_estimation::expected::{
     BASE_STEPS_FULL_MSG_EXPECT,
     BASE_STEPS_PARTIAL_MSG_EXPECT,
@@ -222,4 +223,83 @@ fn test_calc_naive_blake_hash(#[case] test_data: Vec<Felt>) {
         panic!("Expected a single felt return value");
     };
     assert_eq!(calc_blake_hash(&test_data), *cairo_hash);
+}
+
+/// Reduces a u32 modulo the Mersenne31 prime `P = 2^31 - 1`.
+fn reduce_to_m31_word(w: u32) -> u32 {
+    const M31_P: u32 = 0x7FFF_FFFF;
+    let sum = (w >> 31) + (w & M31_P);
+    if sum >= M31_P { sum - M31_P } else { sum }
+}
+
+/// Pure-Rust reimplementation of `stwo-circuits::blake::blake_qm31` for the
+/// `n_bytes = len * 16` path — i.e. as used in the recursive circuit verifier.
+///
+/// Semantics:
+///  1. Each input M31 limb is canonicalized via `reduce_to_m31_word` (matches `M31::from(u32)` on
+///     the stwo side, where `pack_into_qm31s` rounds limbs through `M31`).
+///  2. The QM31 sequence is serialized as 4 little-endian u32 words per QM31.
+///  3. Hash with Blake2s-256.
+///  4. Apply `reduce_to_m31_word` to each of the 8 LE u32 words of the digest (this is stwo's
+///     `reduce_to_m31`).
+fn blake_qm31_reference(m31_limbs: &[u32]) -> [u32; 8] {
+    assert!(
+        m31_limbs.len().is_multiple_of(4),
+        "input must be a whole number of QM31s (4 M31 limbs each)",
+    );
+    let mut bytes = Vec::with_capacity(m31_limbs.len() * 4);
+    for limb in m31_limbs {
+        bytes.extend_from_slice(&reduce_to_m31_word(*limb).to_le_bytes());
+    }
+    let mut hasher = Blake2s256::new();
+    hasher.update(&bytes);
+    let digest: [u8; 32] = hasher.finalize().into();
+    std::array::from_fn(|i| {
+        reduce_to_m31_word(u32::from_le_bytes(digest[i * 4..(i + 1) * 4].try_into().unwrap()))
+    })
+}
+
+/// Test that the Cairo0 `qm31_blake` PoC matches the in-repo Rust reference.
+#[rstest]
+#[case::one_qm31(vec![1, 2, 3, 4])]
+#[case::two_qm31(vec![1, 2, 3, 4, 5, 6, 7, 8])]
+#[case::four_qm31_zeroed(vec![0; 16])]
+#[case::five_qm31(vec![17, 0, 0, 0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 1, 2, 3, 4])]
+#[case::max_m31_limbs(vec![0x7FFF_FFFE; 8])]
+fn test_qm31_blake_parity(#[case] m31_limbs: Vec<u32>) {
+    let runner_config = EntryPointRunnerConfig {
+        layout: LayoutName::all_cairo,
+        trace_enabled: false,
+        verify_secure: false,
+        proof_mode: false,
+        add_main_prefix_to_entrypoint: false,
+        validate_builtins_offset: true,
+    };
+
+    let n_qm31 = m31_limbs.len() / 4;
+    let data: Vec<MaybeRelocatable> =
+        m31_limbs.iter().map(|limb| MaybeRelocatable::Int(Felt::from(*limb))).collect();
+
+    let (_, return_values, _) = initialize_and_run_cairo_0_entry_point(
+        &runner_config,
+        apollo_starknet_os_program::test_programs::QM31_BLAKE_BYTES,
+        "__main__.qm31_blake",
+        &[EndpointArg::from(Felt::from(n_qm31)), EndpointArg::Pointer(PointerArg::Array(data))],
+        &[ImplicitArg::Builtin(BuiltinName::range_check)],
+        &vec![EndpointArg::from(Felt::ZERO); 8],
+        HashMap::new(),
+        None,
+    )
+    .unwrap();
+
+    let cairo_output: [u32; 8] = std::array::from_fn(|i| {
+        let EndpointArg::Value(ValueArg::Single(MaybeRelocatable::Int(felt))) = &return_values[i]
+        else {
+            panic!("Expected eight felt return values; entry {i} is not a felt");
+        };
+        u32::try_from(*felt).expect("output limb must fit in u32")
+    });
+
+    let expected = blake_qm31_reference(&m31_limbs);
+    assert_eq!(cairo_output, expected);
 }
