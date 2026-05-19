@@ -4764,7 +4764,7 @@ dependencies = [
 [[package]]
 name = "cairo-native"
 version = "0.9.0-rc.6"
-source = "git+https://github.com/starkware-libs/cairo_native.git?rev=74aab36c21aa3a87f918d910420efe4c0dbd9d02#74aab36c21aa3a87f918d910420efe4c0dbd9d02"
+source = "git+https://github.com/starkware-libs/cairo_native.git?rev=d19f2ac5e6f01b07f2805cbea42d02b45d9f885f#d19f2ac5e6f01b07f2805cbea42d02b45d9f885f"
 dependencies = [
  "aquamarine",
  "ark-ec",
@@ -4837,7 +4837,7 @@ dependencies = [
 [[package]]
 name = "cairo-starknet-syscalls"
 version = "0.9.0-rc.6"
-source = "git+https://github.com/starkware-libs/cairo_native.git?rev=74aab36c21aa3a87f918d910420efe4c0dbd9d02#74aab36c21aa3a87f918d910420efe4c0dbd9d02"
+source = "git+https://github.com/starkware-libs/cairo_native.git?rev=d19f2ac5e6f01b07f2805cbea42d02b45d9f885f#d19f2ac5e6f01b07f2805cbea42d02b45d9f885f"
 dependencies = [
  "serde",
  "starknet-types-core",
@@ -12015,7 +12015,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 [[package]]
 name = "sierra-emu"
 version = "0.9.0-rc.6"
-source = "git+https://github.com/starkware-libs/cairo_native.git?rev=74aab36c21aa3a87f918d910420efe4c0dbd9d02#74aab36c21aa3a87f918d910420efe4c0dbd9d02"
+source = "git+https://github.com/starkware-libs/cairo_native.git?rev=d19f2ac5e6f01b07f2805cbea42d02b45d9f885f#d19f2ac5e6f01b07f2805cbea42d02b45d9f885f"
 dependencies = [
  "cairo-lang-compiler",
  "cairo-lang-filesystem",
