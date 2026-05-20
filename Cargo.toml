@@ -263,7 +263,7 @@ cairo-lang-utils = "2.17.0-rc.4"
 # (starkware-libs/cairo_native#1610 → #1611 → #1612 → #1613) containing
 # `ContractExecutor`, `EmuContractInfo`, `AotWithProgram`, and `run_with_profile`.
 # Switch back to a crates.io version once those land in a published cairo-native release.
-cairo-native = { git = "https://github.com/starkware-libs/cairo_native.git", rev = "d19f2ac5e6f01b07f2805cbea42d02b45d9f885f", version = "0.9.0-rc.6" }
+cairo-native = { git = "https://github.com/starkware-libs/cairo_native.git", rev = "60e4055897f7f6b5149f17bc464780bb00861176", version = "0.9.0-rc.6" }
 cairo-program-runner-lib = "1.1.0"
 cairo-vm = "3.2.0"
 camelpaste = "0.1.0"
