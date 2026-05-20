@@ -135,6 +135,7 @@ define_string_enum! {
         (BlockInfo),
         (BlockNumber),
         (BlockTimestamp),
+        (BootloaderOutputQm31s),
         (BucketIndex),
         (BuiltinCosts),
         (BuiltinParams),

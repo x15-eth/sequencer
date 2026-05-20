@@ -60,6 +60,11 @@ from starkware.starknet.core.os.output import (
     OsCarriedOutputs,
     os_carried_outputs_new,
 )
+from starkware.starknet.core.os.qm31_blake import qm31_blake
+
+// Number of QM31s holding the privacy bootloader output: the 252-bit blake hash of the bootloader
+// output preimage is decomposed into 28 9-bit M31 limbs, which group into 28 / 4 = 7 QM31s.
+const PRIVACY_BOOTLOADER_OUTPUT_N_QM31S = 7;
 from starkware.starknet.core.os.state.commitment import StateEntry
 from starkware.starknet.core.os.transaction_hash.transaction_hash import (
     CommonTxFields,
@@ -316,6 +321,22 @@ func execute_invoke_function_transaction{
         current_block_number=block_context.block_info_for_execute.block_number,
         virtual_os_config_hash=block_context.os_global_context.virtual_os_config_hash,
     );
+
+    // Load the privacy bootloader output, already packed as QM31s, and hash it. Matches
+    // `QM31::blake(output_qm31s, ...)` in `privacy_circuit_verify::verify_recursive_circuit`.
+    // When `proof_facts_size == 0` the pointer references a zero-filled segment.
+    local bootloader_output_qm31s: felt*;
+    %{ PrivacyBootloaderOutputQm31s %}
+    let (
+        bootloader_output_hash_0_a,
+        bootloader_output_hash_0_b,
+        bootloader_output_hash_0_c,
+        bootloader_output_hash_0_d,
+        bootloader_output_hash_1_a,
+        bootloader_output_hash_1_b,
+        bootloader_output_hash_1_c,
+        bootloader_output_hash_1_d,
+    ) = qm31_blake(n_qm31=PRIVACY_BOOTLOADER_OUTPUT_N_QM31S, data=bootloader_output_qm31s);
 
     %{ StartTx %}
 

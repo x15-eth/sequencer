@@ -13,7 +13,9 @@ use starknet_api::executable_transaction::{AccountTransaction, Transaction};
 use starknet_api::state::StorageKey;
 use starknet_api::transaction::fields::ValidResourceBounds;
 use starknet_api::transaction::{DeployAccountTransaction, TransactionVersion};
+use starknet_proof_verifier::reconstruct_output_preimage;
 use starknet_types_core::felt::Felt;
+use starknet_types_core::hash::Blake2Felt252;
 
 use crate::hint_processor::snos_hint_processor::SnosHintProcessor;
 use crate::hints::error::{InnerInconsistentStorageValueError, OsHintError, OsHintResult};
@@ -354,6 +356,64 @@ pub(crate) fn tx_proof_facts<S: StateReader>(
     ctx.insert_value(Ids::ProofFacts, proof_facts_base)?;
     ctx.insert_value(Ids::ProofFactsSize, proof_facts.len())?;
     Ok(())
+}
+
+/// Loads the privacy bootloader output, packed as QM31s, into a fresh Cairo segment.
+///
+/// Mirrors `privacy_circuit_verify::compute_privacy_bootloader_output` followed by
+/// `pack_into_qm31s`: hash the output preimage (reconstructed from the validated
+/// proof_facts) to a 252-bit Felt, split into 28 9-bit M31 limbs, and lay them out
+/// sequentially in memory (4 limbs per QM31, 7 QM31s total, no padding).
+///
+/// When proof_facts is empty (which `check_proof_facts` permits) the segment is
+/// zero-filled.
+pub(crate) fn privacy_bootloader_output_qm31s<S: StateReader>(
+    hint_processor: &mut SnosHintProcessor<'_, S>,
+    mut ctx: HintContext<'_>,
+) -> OsHintResult {
+    let proof_facts = get_proof_facts(hint_processor.get_current_execution_helper()?)?;
+
+    let m31_limbs = if proof_facts.0.is_empty() {
+        [0u32; PRIVACY_BOOTLOADER_OUTPUT_N_M31_LIMBS]
+    } else {
+        let output_preimage = reconstruct_output_preimage(&proof_facts)
+            .map_err(|e| OsHintError::AssertionFailed { message: e.to_string() })?;
+        compute_privacy_bootloader_m31_limbs(&output_preimage)
+    };
+
+    let felts: Vec<MaybeRelocatable> =
+        m31_limbs.iter().map(|w| MaybeRelocatable::from(Felt::from(*w))).collect();
+    let ptr = ctx.vm.gen_arg(&felts)?;
+    ctx.insert_value(Ids::BootloaderOutputQm31s, ptr)?;
+    Ok(())
+}
+
+/// Number of 9-bit M31 limbs that pack a 252-bit Felt. Mirrors
+/// `stwo_cairo_common::prover_types::cpu::FELT252_N_WORDS`.
+const PRIVACY_BOOTLOADER_OUTPUT_N_M31_LIMBS: usize = 28;
+const FELT252_BITS_PER_WORD: usize = 9;
+
+/// Equivalent of `Felt252::from(blake2_hash).get_limbs()` (see
+/// `stwo_cairo_common::prover_types::cpu::Felt252::get_m31`). Returns the 28 9-bit
+/// M31 representations of the Blake2 hash of `output_preimage` as raw u32s.
+fn compute_privacy_bootloader_m31_limbs(
+    output_preimage: &[Felt],
+) -> [u32; PRIVACY_BOOTLOADER_OUTPUT_N_M31_LIMBS] {
+    let output: Felt = Blake2Felt252::encode_felt252_data_and_calc_blake_hash(output_preimage);
+    let limbs: [u64; 4] = output.to_le_digits();
+    let mask: u64 = (1u64 << FELT252_BITS_PER_WORD) - 1;
+    std::array::from_fn(|index| {
+        let shift = FELT252_BITS_PER_WORD * index;
+        let low_limb = shift / 64;
+        let high_limb = (shift + FELT252_BITS_PER_WORD - 1) / 64;
+        let shift_low = shift & 0x3F;
+        let value = if low_limb == high_limb {
+            (limbs[low_limb] >> shift_low) & mask
+        } else {
+            ((limbs[low_limb] >> shift_low) | (limbs[high_limb] << (64 - shift_low))) & mask
+        };
+        value.try_into().expect("value should fit in a u32")
+    })
 }
 
 pub(crate) fn gen_signature_arg<S: StateReader>(
