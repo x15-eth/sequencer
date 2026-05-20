@@ -489,7 +489,7 @@ impl RpcStorageProofsProvider {
     /// `get_storage_proof` request whose response carries the sibling preimages the committer
     /// will need to canonicalize the deletion. Returns the original proof merged with the
     /// supplement. No-op when no deletes need extra preimages.
-    async fn augment_with_delete_siblings(
+    pub(crate) async fn augment_with_delete_siblings(
         &self,
         block_number: BlockNumber,
         query: &RpcStorageProofsQuery,
