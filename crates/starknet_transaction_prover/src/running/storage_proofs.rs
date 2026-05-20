@@ -150,9 +150,41 @@ pub(crate) fn merge_storage_proofs(
     RpcStorageProof { classes_proof, contracts_proof, contracts_storage_proofs, global_roots }
 }
 
+/// Merges a supplement proof's inner-node preimages into `proof`, leaving positional data
+/// (contract_leaves_data, global_roots) from `proof` untouched.
+///
+/// Used to absorb a second-round `get_storage_proof` response that fetches missing sibling
+/// preimages for deletion paths. The supplement's `contract_leaves_data` and `global_roots`
+/// are silently discarded — the first-round proof already owns them.
+fn merge_supplement_into(
+    mut proof: RpcStorageProof,
+    supplement: RpcStorageProof,
+    original_query: &RpcStorageProofsQuery,
+    supplement_query: &RpcStorageProofsQuery,
+) -> RpcStorageProof {
+    proof.classes_proof.extend(supplement.classes_proof);
+    proof.contracts_proof.nodes.extend(supplement.contracts_proof.nodes);
+
+    let addr_to_idx: HashMap<Felt, usize> = original_query
+        .contract_storage_keys
+        .iter()
+        .enumerate()
+        .map(|(i, csk)| (csk.contract_address, i))
+        .collect();
+
+    for (csk, supp_nodes) in
+        supplement_query.contract_storage_keys.iter().zip(supplement.contracts_storage_proofs)
+    {
+        if let Some(&idx) = addr_to_idx.get(&csk.contract_address) {
+            proof.contracts_storage_proofs[idx].extend(supp_nodes);
+        }
+    }
+
+    proof
+}
+
 /// Bit position of the MSB of a 251-bit storage key inside the 256-bit big-endian Felt array.
 #[allow(clippy::as_conversions)] // u8 → usize is lossless and required in const context.
-#[allow(dead_code)] // Wired into get_storage_proofs in a follow-up PR.
 const KEY_BIT_OFFSET: usize = 256 - SubTreeHeight::ACTUAL_HEIGHT.0 as usize;
 
 /// Per deleted storage entry in `state_diff`, walks the storage trie proof toward the deleted
@@ -162,7 +194,6 @@ const KEY_BIT_OFFSET: usize = 256 - SubTreeHeight::ACTUAL_HEIGHT.0 as usize;
 ///
 /// Returns an empty vec when no deletes need extra preimages (no deletes, sibling preimages
 /// already present, or the deleted keys don't exist in the trie).
-#[allow(dead_code)] // Wired into get_storage_proofs in a follow-up PR.
 pub(crate) fn compute_missing_sibling_keys(
     rpc_proof: &RpcStorageProof,
     query: &RpcStorageProofsQuery,
@@ -454,6 +485,35 @@ impl RpcStorageProofsProvider {
         Ok(storage_proof)
     }
 
+    /// If `execution_data.state_diff` deletes storage entries, issues a second-round
+    /// `get_storage_proof` request whose response carries the sibling preimages the committer
+    /// will need to canonicalize the deletion. Returns the original proof merged with the
+    /// supplement. No-op when no deletes need extra preimages.
+    async fn augment_with_delete_siblings(
+        &self,
+        block_number: BlockNumber,
+        query: &RpcStorageProofsQuery,
+        rpc_proof: RpcStorageProof,
+        execution_data: &VirtualBlockExecutionData,
+    ) -> Result<RpcStorageProof, ProofProviderError> {
+        let supplement_keys =
+            compute_missing_sibling_keys(&rpc_proof, query, &execution_data.state_diff);
+        if supplement_keys.is_empty() {
+            return Ok(rpc_proof);
+        }
+
+        let supplement_query = RpcStorageProofsQuery {
+            class_hashes: vec![],
+            contract_addresses: supplement_keys
+                .iter()
+                .filter_map(|csk| ContractAddress::try_from(csk.contract_address).ok())
+                .collect(),
+            contract_storage_keys: supplement_keys,
+        };
+        let supplement = self.fetch_proofs(block_number, &supplement_query).await?;
+        Ok(merge_supplement_into(rpc_proof, supplement, query, &supplement_query))
+    }
+
     /// Creates commitment infos from RPC storage proof and state changes.
     /// This function runs the committer to compute new state roots based on the execution data,
     /// then generates commitment infos using the facts stored in the committer's storage.
@@ -650,6 +710,13 @@ impl StorageProofProvider for RpcStorageProofsProvider {
         let query = Self::prepare_query(execution_data);
 
         let rpc_proof = self.fetch_proofs(block_number, &query).await?;
+
+        // Pre-fetch sibling preimages required by the committer's deletion-promotion logic.
+        // RPC storage proofs only expose preimages on the access path; if any deleted key has
+        // an orphan sibling, the committer would silently produce a non-canonical tree.
+        let rpc_proof = self
+            .augment_with_delete_siblings(block_number, &query, rpc_proof, execution_data)
+            .await?;
 
         // Validate that contract_leaves_data matches contract_addresses length.
         let leaves_len = rpc_proof.contracts_proof.contract_leaves_data.len();
